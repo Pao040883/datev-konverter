@@ -95,16 +95,27 @@ def check_for_update() -> Optional[dict]:
     }
 
 
-def _download(url: str, target_path: str) -> None:
+def _download(url: str, target_path: str, progress=None) -> None:
+    """Laedt ``url`` nach ``target_path``.
+
+    ``progress`` (optional) wird als ``progress(geladen_bytes, gesamt_bytes)``
+    aufgerufen; ``gesamt_bytes`` ist 0, wenn die Groesse unbekannt ist.
+    """
     request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     with urllib.request.urlopen(request, timeout=_TIMEOUT * 6) as response, open(
         target_path, "wb"
     ) as out_file:
+        header_total = response.headers.get("Content-Length")
+        total = int(header_total) if header_total and header_total.isdigit() else 0
+        downloaded = 0
         while True:
             chunk = response.read(65536)
             if not chunk:
                 break
             out_file.write(chunk)
+            downloaded += len(chunk)
+            if progress is not None:
+                progress(downloaded, total)
 
 
 def _build_update_script(target_exe: str, new_exe: str, log_path: str) -> str:
@@ -128,7 +139,7 @@ def _build_update_script(target_exe: str, new_exe: str, log_path: str) -> str:
         f'set "LOG={log_path}"\r\n'
         'echo [%date% %time%] Update gestartet>>"%LOG%"\r\n'
         "rem kurze Anfangsverzoegerung, damit sich die alte EXE beenden kann\r\n"
-        "ping -n 3 127.0.0.1 >nul\r\n"
+        "ping -n 2 127.0.0.1 >nul\r\n"
         "set /a tries=0\r\n"
         ":retry\r\n"
         'move /Y "%NEWEXE%" "%TARGET%" >>"%LOG%" 2>&1\r\n'
@@ -150,13 +161,14 @@ def _build_update_script(target_exe: str, new_exe: str, log_path: str) -> str:
     )
 
 
-def apply_update(download_url: str) -> None:
+def apply_update(download_url: str, progress=None) -> None:
     """Laedt die neue EXE und startet den verzoegerten Selbst-Tausch.
 
     Nur im gebauten Zustand (``is_frozen()``) sinnvoll. Nach dem Aufruf muss das
     Programm sofort beendet werden, damit das Batch-Skript die alte EXE
     ueberschreiben kann. Wirft ``RuntimeError``, wenn kein Selbst-Tausch moeglich
-    ist (z. B. im Entwicklungsmodus).
+    ist (z. B. im Entwicklungsmodus). ``progress`` wird waehrend des Downloads
+    aufgerufen (siehe :func:`_download`).
     """
     if not is_frozen() or os.name != "nt":
         raise RuntimeError(
@@ -171,7 +183,7 @@ def apply_update(download_url: str) -> None:
     log_path = os.path.join(tmp_dir, "datev_update_log.txt")
     bat_path = os.path.join(tmp_dir, "datev_konverter_update.bat")
 
-    _download(download_url, new_exe)
+    _download(download_url, new_exe, progress=progress)
 
     # Als OEM/Konsolen-Codepage schreiben, damit Umlaute in Pfaden von cmd korrekt
     # gelesen werden.

@@ -61,8 +61,21 @@ class App(tk.Tk):
         self._build_table()
         self._build_footer()
 
+        # Fenster nach dem Start in den Vordergrund holen (wichtig nach einem
+        # Auto-Update, da die neu gestartete EXE sonst im Hintergrund auftaucht).
+        self.after(100, self._bring_to_front)
+
         # Update-Pruefung erst kurz nach dem Anzeigen des Fensters.
         self.after(800, lambda: self.check_updates(manual=False))
+
+    def _bring_to_front(self) -> None:
+        try:
+            self.lift()
+            self.attributes("-topmost", True)
+            self.after(400, lambda: self.attributes("-topmost", False))
+            self.focus_force()
+        except Exception:  # noqa: BLE001
+            pass
 
     # ---------------------------------------------------------------- Aufbau
     def _build_menu(self) -> None:
@@ -327,17 +340,54 @@ class App(tk.Tk):
             )
             return
 
+        self._run_update(info)
+
+    def _run_update(self, info: dict) -> None:
+        """Zeigt ein Fortschrittsfenster, laedt das Update und startet neu."""
+        win = tk.Toplevel(self)
+        win.title(APP_TITLE)
+        win.resizable(False, False)
+        win.transient(self)
         try:
-            updater.apply_update(info["download_url"])
+            win.grab_set()
+        except Exception:  # noqa: BLE001
+            pass
+
+        frame = ttk.Frame(win, padding=20)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame, text=f"DATEV-Konverter wird auf Version {info['version']} aktualisiert."
+        ).pack(anchor="w")
+        status = tk.StringVar(value="Download wird gestartet …")
+        ttk.Label(frame, textvariable=status, foreground="#555").pack(anchor="w", pady=(6, 8))
+        bar = ttk.Progressbar(frame, mode="determinate", maximum=100, length=340)
+        bar.pack()
+
+        win.update_idletasks()
+        win.geometry(f"+{self.winfo_rootx() + 60}+{self.winfo_rooty() + 80}")
+
+        def on_progress(downloaded: int, total: int) -> None:
+            mb = downloaded / 1048576
+            if total:
+                bar["value"] = downloaded * 100 / total
+                status.set(f"Wird heruntergeladen …  {mb:.1f} von {total / 1048576:.1f} MB")
+            else:
+                status.set(f"Wird heruntergeladen …  {mb:.1f} MB")
+            win.update_idletasks()
+
+        try:
+            updater.apply_update(info["download_url"], progress=on_progress)
         except Exception as exc:  # noqa: BLE001
+            win.destroy()
             messagebox.showerror(APP_TITLE, f"Update fehlgeschlagen:\n{exc}")
             return
 
-        # Ohne weitere Rueckfrage schliessen; das Update-Skript startet die neue
-        # Version automatisch. Hart beenden, damit die EXE-Sperre sofort frei wird
-        # und das Skript die Datei ersetzen kann.
-        self.destroy()
-        os._exit(0)
+        bar["value"] = 100
+        status.set("Fertig. Das Programm startet gleich neu …")
+        win.update_idletasks()
+        # Kurz stehen lassen, dann hart beenden -> das Update-Skript ersetzt die
+        # EXE und startet die neue Version automatisch.
+        self.after(700, lambda: os._exit(0))
 
     def _show_about(self) -> None:
         messagebox.showinfo(
