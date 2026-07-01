@@ -193,6 +193,8 @@ class UpdateScriptTests(unittest.TestCase):
         # Austausch + Neustart
         self.assertIn('move /Y "%NEWEXE%" "%TARGET%"', script)
         self.assertIn('start "" "%TARGET%"', script)
+        # PyInstaller-Umgebungsvariablen werden geleert (sonst DLL-Fehler beim Neustart)
+        self.assertIn('set "_MEIPASS2="', script)
         # Zielpfade korrekt eingesetzt
         self.assertIn('set "TARGET=C:\\Tools\\DATEV-Konverter.exe"', script)
         self.assertIn("C:\\Temp\\DATEV-Konverter.new.exe", script)

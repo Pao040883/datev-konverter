@@ -118,6 +118,11 @@ def _build_update_script(target_exe: str, new_exe: str, log_path: str) -> str:
     return (
         "@echo off\r\n"
         "setlocal enableextensions\r\n"
+        "rem PyInstaller-Umgebungsvariablen leeren, damit die neue EXE frisch\r\n"
+        "rem entpackt und nicht im geloeschten Temp-Ordner der alten Instanz sucht\r\n"
+        'set "_MEIPASS2="\r\n'
+        'set "_PYI_ARCHIVE_FILE="\r\n'
+        'set "_PYI_APPLICATION_HOME_DIR="\r\n'
         f'set "TARGET={target_exe}"\r\n'
         f'set "NEWEXE={new_exe}"\r\n'
         f'set "LOG={log_path}"\r\n'
@@ -173,11 +178,21 @@ def apply_update(download_url: str) -> None:
     with open(bat_path, "w", encoding="oem", errors="replace") as bat_file:
         bat_file.write(_build_update_script(current_exe, new_exe, log_path))
 
-    # Losgeloest starten, damit das Skript den Elternprozess (uns) ueberlebt.
-    detached = 0x00000008  # DETACHED_PROCESS
-    new_group = 0x00000200  # CREATE_NEW_PROCESS_GROUP
+    # WICHTIG: PyInstaller-onefile setzt Umgebungsvariablen (_MEIPASS2 / _PYI_*),
+    # die an Kindprozesse vererbt werden. Erbt die neu gestartete EXE diese, sucht
+    # ihr Bootloader die Python-DLL im bereits geloeschten Temp-Ordner der alten
+    # Instanz ("Failed to load Python DLL ..._MEIxxxxx\\python312.dll"). Deshalb
+    # eine bereinigte Umgebung ohne diese Variablen an das Skript uebergeben.
+    child_env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("_MEIPASS") and not k.startswith("_PYI")
+    }
+    # CREATE_NO_WINDOW: kein sichtbares Konsolenfenster waehrend des Updates.
+    create_no_window = 0x08000000
     subprocess.Popen(
         ["cmd", "/c", bat_path],
-        creationflags=detached | new_group,
+        env=child_env,
+        creationflags=create_no_window,
         close_fds=True,
     )
