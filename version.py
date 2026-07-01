@@ -6,4 +6,4 @@ Wert automatisch aus dem Git-Tag ueberschrieben, sodass die eingebettete Version
 immer dem veroeffentlichten Release entspricht.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"

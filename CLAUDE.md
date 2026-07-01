@@ -65,26 +65,37 @@ the sample files before changing any index. All of this lives in [core.py](core.
   Output is UTF-8 with `\r\n` line endings.
 - **Date** from column index 5 (`DATE_COLUMN_INDEX`); rows without a parseable date
   are dropped.
-- **Amount** from index 6 or 24, matched `^-?\d+[.,]\d{2}$`; **only positive
-  (incoming) amounts are kept.**
-- **Reference** = invoice number matching `\bR\d+\b`, searched in the
-  Verwendungszweck fields (indices 11–14) then the whole row.
+- **Amount** from index 6 or 24, matched `^-?\d+[.,]\d{2}$`. Both signs are parsed;
+  the sign only decides `RowData.is_incoming` (positive = payment received).
+- **Reference** = invoice number, extracted length-aware: `extract_reference` first
+  looks for a formally correct number (`REFERENCE_EXACT_PATTERN`, R + exactly
+  `REFERENCE_DIGITS` digits) in the Verwendungszweck fields (indices 11–14) then the
+  whole row, and only falls back to any `\bR\d+\b` as a hint to correct.
 - **Payer** joins indices 7 and 8, default `"UNBEKANNT"`.
 
-**Key behavior change vs. the original single-file version:** rows *without* a valid
-invoice number are **no longer dropped**. `parse_row` keeps them with `referenz=""`
-so the UI can show them (red) and the user can type the correct number. A row is
-exportable when `RowData.is_valid` (reference matches `^R\d+$`, see
-`is_valid_reference`). Export writes only valid rows and warns about the rest. Rows
-are still dropped only for a missing date or a missing/negative amount.
+**Transparency-driven behavior (why rows are kept, not dropped):** the original tool
+silently dropped anything it couldn't export, which confused users ("where did my
+entry go?"). Now `parse_row` keeps every row that has a valid date **and** a parseable
+amount, and the UI shows all of them with a status via `RowData.status`:
+- `ok` — incoming + valid reference → **green**, exported.
+- `missing_ref` — incoming but reference missing/wrong length → **red**, editable
+  (double-click), not exported until fixed.
+- `outgoing` — negative amount (Auszahlung) → **grey**, not editable, never exported.
+
+A row is exportable only when `RowData.is_valid` (`is_incoming` **and**
+`is_valid_reference`). Valid reference = `^R\d{REFERENCE_DIGITS}$` (default R + 10
+digits) — this catches too-short/too-long numbers, which is the main correctness
+guard. `REFERENCE_DIGITS` in [core.py](core.py) is the one place to change the
+expected length. Rows are dropped entirely only when they have **no date or no
+amount** (header/junk lines); their count is surfaced in the UI summary, not hidden.
 
 Each exported row becomes a fixed 19-field DATEV line (`build_target_line`): amount
 without punctuation, reference, `DDMM` date, constant account `1260`, payer, `EUR`,
 `1`, `0`. Output filename is derived from the first row's month/year as
 `Datev_31458_01MMYY-<lastday>MMYY.txt` (`SENDER_NUMBER = "31458"`), de-duplicated
 with `_2`, `_3`, … The mapping constants worth knowing: `DATE_COLUMN_INDEX`,
-`TARGET_ACCOUNT`, `SENDER_NUMBER`, `REFERENCE_SEARCH_PATTERN`,
-`REFERENCE_VALID_PATTERN`.
+`TARGET_ACCOUNT`, `SENDER_NUMBER`, `REFERENCE_DIGITS`, `REFERENCE_SEARCH_PATTERN`,
+`REFERENCE_EXACT_PATTERN`, `REFERENCE_VALID_PATTERN`.
 
 > Note: the stale sample `Datev_*.txt` files predate the current logic (they include
 > a negative row and a 20-field layout). Trust `build_target_line` / the tests, not

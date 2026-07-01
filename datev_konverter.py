@@ -36,8 +36,10 @@ COLUMNS = [
 ]
 COLUMN_IDS = [col[0] for col in COLUMNS]
 
-COLOR_INVALID = "#f8d7da"  # helles Rot
+COLOR_INVALID = "#f8d7da"  # helles Rot (Zahlungseingang ohne gueltige Nummer)
 COLOR_VALID = "#ffffff"
+COLOR_OUTGOING = "#e2e3e5"  # grau (Auszahlung, wird nicht exportiert)
+COLOR_OUTGOING_TEXT = "#6c757d"
 
 
 class App(tk.Tk):
@@ -50,6 +52,7 @@ class App(tk.Tk):
         self.rows: list[core.RowData] = []
         self.rows_by_item: dict[str, core.RowData] = {}
         self.current_file: Path | None = None
+        self._skipped_count = 0
         self.summary_var = tk.StringVar(value="Keine Datei geladen.")
         self.file_var = tk.StringVar(value="Keine Datei ausgewaehlt")
 
@@ -95,6 +98,7 @@ class App(tk.Tk):
 
         self.tree.tag_configure("invalid", background=COLOR_INVALID)
         self.tree.tag_configure("valid", background=COLOR_VALID)
+        self.tree.tag_configure("outgoing", background=COLOR_OUTGOING, foreground=COLOR_OUTGOING_TEXT)
 
         vsb = ttk.Scrollbar(container, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
@@ -115,7 +119,8 @@ class App(tk.Tk):
 
         hint = ttk.Label(
             self,
-            text="Tipp: Doppelklick auf die Spalte „Rechnungsnummer“, um eine fehlende Nummer nachzutragen.",
+            text="Rot = Rechnungsnummer prüfen (Doppelklick zum Nachtragen)   ·   "
+            "Grau = Auszahlung, wird nicht exportiert",
             foreground="#777",
             padding=(10, 0, 10, 8),
         )
@@ -131,11 +136,14 @@ class App(tk.Tk):
             return
 
         try:
-            rows = core.load_rows(Path(path))
+            raw_rows = core.read_source_rows(Path(path))
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror(APP_TITLE, f"Datei konnte nicht gelesen werden:\n{exc}")
             return
 
+        rows = core.parse_rows(raw_rows)
+        # Zeilen ohne Datum/Betrag (z. B. Kopfzeilen) werden uebersprungen -- Anzahl merken.
+        self._skipped_count = len(raw_rows) - len(rows)
         self.current_file = Path(path)
         self.rows = rows
         self.file_var.set(self.current_file.name)
@@ -144,7 +152,7 @@ class App(tk.Tk):
         if not rows:
             messagebox.showinfo(
                 APP_TITLE,
-                "In dieser Datei wurden keine Zahlungseingaenge gefunden.",
+                "In dieser Datei wurden keine Buchungszeilen gefunden.",
             )
 
     def _populate_table(self) -> None:
@@ -169,25 +177,37 @@ class App(tk.Tk):
         self._refresh_summary()
 
     def _apply_status(self, item: str, row: core.RowData) -> None:
-        if row.is_valid:
+        if not row.is_incoming:
+            self.tree.item(item, tags=("outgoing",))
+            self.tree.set(item, "status", "Auszahlung – wird nicht exportiert")
+        elif row.is_valid:
             self.tree.item(item, tags=("valid",))
             self.tree.set(item, "status", "OK")
         else:
             self.tree.item(item, tags=("invalid",))
-            self.tree.set(item, "status", "Rechnungsnummer fehlt")
+            self.tree.set(item, "status", "Rechnungsnummer prüfen")
 
     def _refresh_summary(self) -> None:
-        total = len(self.rows)
-        invalid = sum(1 for row in self.rows if not row.is_valid)
-        if total == 0:
-            self.summary_var.set("Keine Zahlungseingaenge geladen.")
+        if not self.rows:
+            self.summary_var.set("Keine Datei geladen.")
             self.export_button.config(state="disabled")
             return
 
-        self.summary_var.set(
-            f"{total} Eintraege, davon {invalid} ohne gueltige Rechnungsnummer"
-        )
-        self.export_button.config(state="normal")
+        incoming = [row for row in self.rows if row.is_incoming]
+        missing = [row for row in incoming if not row.is_valid]
+        outgoing = len(self.rows) - len(incoming)
+
+        parts = [
+            f"{len(incoming)} Zahlungseingänge",
+            f"{len(missing)} ohne gültige Rechnungsnummer",
+        ]
+        if outgoing:
+            parts.append(f"{outgoing} Auszahlung(en) – nicht exportiert")
+        if self._skipped_count:
+            parts.append(f"{self._skipped_count} Zeile(n) ohne Zahlungssatz übersprungen")
+        self.summary_var.set("   ·   ".join(parts))
+
+        self.export_button.config(state="normal" if incoming else "disabled")
 
     # ------------------------------------------------------ Inline-Bearbeitung
     def _on_double_click(self, event: "tk.Event") -> None:
@@ -204,6 +224,10 @@ class App(tk.Tk):
             return
         if col_name != "referenz":
             return
+
+        row = self.rows_by_item.get(item)
+        if row is None or not row.is_incoming:
+            return  # Auszahlungen sind nicht editierbar
 
         self._begin_edit(item, column)
 
@@ -245,20 +269,20 @@ class App(tk.Tk):
             return
 
         valid_rows = [row for row in self.rows if row.is_valid]
-        invalid_count = len(self.rows) - len(valid_rows)
+        missing_ref = [row for row in self.rows if row.is_incoming and not row.is_valid]
 
         if not valid_rows:
             messagebox.showerror(
                 APP_TITLE,
-                "Keine der Zeilen hat eine gueltige Rechnungsnummer. Bitte zuerst nachtragen.",
+                "Kein Zahlungseingang hat eine gueltige Rechnungsnummer. Bitte zuerst nachtragen.",
             )
             return
 
-        if invalid_count:
+        if missing_ref:
             proceed = messagebox.askyesno(
                 APP_TITLE,
-                f"{invalid_count} Eintraege ohne gueltige Rechnungsnummer werden NICHT "
-                f"exportiert.\n\nMoechten Sie fortfahren?",
+                f"{len(missing_ref)} Zahlungseingänge ohne gültige Rechnungsnummer werden "
+                f"NICHT exportiert.\n\nMöchten Sie fortfahren?",
             )
             if not proceed:
                 return

@@ -23,7 +23,7 @@ def build_row(
     payer="KATHRIN STEINMEYER",
     payer2="",
     verwendungszweck="SVWZ+Rechnung Nr.",
-    referenz="R2620800128",
+    referenz="R2620800128",  # R + 10 Ziffern = gueltig
 ):
     """Erzeugt eine Rohzeile (bereits ohne Anfuehrungszeichen) mit 25 Spalten."""
     row = [""] * 25
@@ -39,15 +39,31 @@ def build_row(
 
 class ReferenceValidationTests(unittest.TestCase):
     def test_valid_references(self):
-        self.assertTrue(core.is_valid_reference("R123"))
+        # Gueltig = R + genau 10 Ziffern.
         self.assertTrue(core.is_valid_reference("R2620800128"))
-        self.assertTrue(core.is_valid_reference("  R42  "))
+        self.assertTrue(core.is_valid_reference("  R2620800001  "))
 
     def test_invalid_references(self):
         self.assertFalse(core.is_valid_reference(""))
         self.assertFalse(core.is_valid_reference("12345"))
-        self.assertFalse(core.is_valid_reference("r123"))
+        self.assertFalse(core.is_valid_reference("r2620800128"))  # klein geschrieben
         self.assertFalse(core.is_valid_reference("R12-3"))
+
+    def test_length_validation(self):
+        self.assertFalse(core.is_valid_reference("R123"))          # zu kurz
+        self.assertFalse(core.is_valid_reference("R262080012"))    # 9 Ziffern
+        self.assertTrue(core.is_valid_reference("R2620800128"))    # 10 Ziffern
+        self.assertFalse(core.is_valid_reference("R26208001289"))  # 11 Ziffern
+
+    def test_extract_prefers_correct_length(self):
+        # Enthaelt eine zu kurze und eine korrekte Nummer -> die korrekte gewinnt.
+        row = build_row(verwendungszweck="Rechnung R26 sowie R2620800128 bezahlt", referenz="")
+        self.assertEqual(core.extract_reference(row), "R2620800128")
+
+    def test_extract_returns_wrong_length_as_hint(self):
+        # Nur eine zu kurze Nummer vorhanden -> als Korrektur-Hinweis zurueckgeben.
+        row = build_row(verwendungszweck="Zahlung R26", referenz="")
+        self.assertEqual(core.extract_reference(row), "R26")
 
 
 class ParsingHelperTests(unittest.TestCase):
@@ -88,11 +104,19 @@ class ParseRowTests(unittest.TestCase):
         self.assertFalse(row.is_valid)
         self.assertEqual(row.status, "missing_ref")
 
-    def test_negative_amount_is_dropped(self):
-        self.assertIsNone(core.parse_row(build_row(betrag="-301,00")))
+    def test_negative_amount_is_kept_as_outgoing(self):
+        # Auszahlungen werden nicht mehr verworfen, sondern als 'outgoing' behalten.
+        row = core.parse_row(build_row(betrag="-301,00"))
+        self.assertIsNotNone(row)
+        self.assertFalse(row.is_incoming)
+        self.assertFalse(row.is_valid)
+        self.assertEqual(row.status, "outgoing")
 
     def test_row_without_date_is_dropped(self):
         self.assertIsNone(core.parse_row(build_row(datum="")))
+
+    def test_row_without_amount_is_dropped(self):
+        self.assertIsNone(core.parse_row(build_row(betrag="")))
 
 
 class TargetLineTests(unittest.TestCase):
@@ -142,7 +166,7 @@ class IntegrationTests(unittest.TestCase):
             out_path = core.write_output(valid, tmp)
             self.assertTrue(os.path.exists(out_path))
             # Binaer lesen, damit die CRLF-Zeilenenden nicht uebersetzt werden.
-            written = open(out_path, "rb").read()
+            written = out_path.read_bytes()
             self.assertIn(b"R2620800128", written)
             self.assertTrue(written.endswith(b"\r\n"))
 

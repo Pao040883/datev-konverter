@@ -21,10 +21,17 @@ from typing import List, Optional
 
 DATE_COLUMN_INDEX = 5  # Spalte 6 (0-basiert)
 
-# Muster fuer die Rechnungsnummer. Zum Finden in Freitext (Verwendungszweck) mit
-# Wortgrenzen; zur Validierung einer (auch manuell eingetippten) Nummer exakt.
+# Eine gueltige Rechnungsnummer ist 'R' gefolgt von genau so vielen Ziffern.
+# Diese eine Konstante bei Bedarf anpassen, wenn sich das Nummernformat aendert.
+REFERENCE_DIGITS = 10
+
+# Muster fuer die Rechnungsnummer:
+# - SEARCH: irgendeine R-Nummer (auch falsche Laenge) als Korrektur-Hinweis
+# - EXACT:  eine formal korrekte Nummer (R + genau REFERENCE_DIGITS Ziffern)
+# - VALID:  Validierung einer (auch manuell eingetippten) Nummer
 REFERENCE_SEARCH_PATTERN = re.compile(r"\bR\d+\b")
-REFERENCE_VALID_PATTERN = re.compile(r"^R\d+$")
+REFERENCE_EXACT_PATTERN = re.compile(rf"\bR\d{{{REFERENCE_DIGITS}}}\b")
+REFERENCE_VALID_PATTERN = re.compile(rf"^R\d{{{REFERENCE_DIGITS}}}$")
 
 # Feste DATEV-Zielwerte
 TARGET_ACCOUNT = "1260"
@@ -32,7 +39,11 @@ SENDER_NUMBER = "31458"
 
 
 def is_valid_reference(text: str) -> bool:
-    """True, wenn ``text`` eine gueltige Rechnungsnummer (R + Ziffern) ist."""
+    """True, wenn ``text`` eine gueltige Rechnungsnummer ist.
+
+    Gueltig = 'R' gefolgt von genau ``REFERENCE_DIGITS`` Ziffern. Damit werden
+    auch zu kurze oder zu lange Nummern als ungueltig erkannt.
+    """
     return bool(REFERENCE_VALID_PATTERN.match(text.strip()))
 
 
@@ -45,13 +56,21 @@ class RowData:
     raw: List[str]
 
     @property
+    def is_incoming(self) -> bool:
+        """Ob es sich um einen Zahlungseingang (positiver Betrag) handelt."""
+        return is_incoming_amount(self.betrag_text)
+
+    @property
     def is_valid(self) -> bool:
-        """Ob diese Zeile exportiert werden kann (gueltige Rechnungsnummer)."""
-        return is_valid_reference(self.referenz)
+        """Exportierbar: Zahlungseingang MIT gueltiger Rechnungsnummer."""
+        return self.is_incoming and is_valid_reference(self.referenz)
 
     @property
     def status(self) -> str:
-        return "ok" if self.is_valid else "missing_ref"
+        """'ok', 'missing_ref' (Eingang ohne Nummer) oder 'outgoing' (Auszahlung)."""
+        if not self.is_incoming:
+            return "outgoing"
+        return "ok" if is_valid_reference(self.referenz) else "missing_ref"
 
 
 def read_source_rows(source_path: Path) -> List[List[str]]:
@@ -79,6 +98,12 @@ def parse_date(value: str) -> Optional[date]:
 
 
 def extract_reference(row: List[str]) -> str:
+    """Sucht die Rechnungsnummer im Verwendungszweck, sonst in der ganzen Zeile.
+
+    Bevorzugt eine formal korrekte Nummer (R + genau ``REFERENCE_DIGITS`` Ziffern).
+    Gibt es keine, wird eine sonstige R-Nummer (vermutlich falsche Laenge) als
+    Hinweis zurueckgegeben, damit der Nutzer sie in der Tabelle korrigieren kann.
+    """
     verwendungszweck_parts = []
     for index in (11, 12, 13, 14):
         if index < len(row):
@@ -87,13 +112,21 @@ def extract_reference(row: List[str]) -> str:
                 verwendungszweck_parts.append(part)
 
     verwendungszweck = " ".join(verwendungszweck_parts)
-    match = REFERENCE_SEARCH_PATTERN.search(verwendungszweck)
-    if match:
-        return match.group(0)
-
     fallback_text = " ".join(cell.strip().strip('"') for cell in row if cell.strip())
-    fallback_match = REFERENCE_SEARCH_PATTERN.search(fallback_text)
-    return fallback_match.group(0) if fallback_match else ""
+
+    # 1) Bevorzugt eine formal korrekte Nummer (richtige Laenge).
+    for text in (verwendungszweck, fallback_text):
+        match = REFERENCE_EXACT_PATTERN.search(text)
+        if match:
+            return match.group(0)
+
+    # 2) Sonst irgendeine R-Nummer als Korrektur-Hinweis.
+    for text in (verwendungszweck, fallback_text):
+        match = REFERENCE_SEARCH_PATTERN.search(text)
+        if match:
+            return match.group(0)
+
+    return ""
 
 
 def get_payer_name(row: List[str]) -> str:
@@ -153,9 +186,11 @@ def extract_booking_date_from_column_6(row: List[str]) -> Optional[date]:
 def parse_row(row: List[str]) -> Optional[RowData]:
     """Wandelt eine Rohzeile in ``RowData`` um oder gibt ``None`` zurueck.
 
-    ``None`` (Zeile verworfen) nur bei fehlendem Datum oder fehlendem/negativem
-    Betrag. Eine fehlende Rechnungsnummer fuehrt NICHT mehr zum Verwerfen -- die
-    Zeile bleibt mit ``referenz=""`` erhalten (Status ``missing_ref``).
+    ``None`` (Zeile verworfen) nur bei fehlendem Datum oder fehlendem Betrag --
+    das sind i. d. R. Kopf-/Leerzeilen ohne Zahlungssatz. Fehlende Rechnungsnummer
+    und Auszahlungen (negativer Betrag) fuehren NICHT zum Verwerfen: solche Zeilen
+    bleiben zur Transparenz erhalten (Status ``missing_ref`` bzw. ``outgoing``) und
+    werden erst beim Export gefiltert.
     """
     datum = extract_booking_date_from_column_6(row)
     if not datum:
@@ -164,9 +199,6 @@ def parse_row(row: List[str]) -> Optional[RowData]:
     try:
         betrag_text = extract_amount_text(row)
     except ValueError:
-        return None
-
-    if not is_incoming_amount(betrag_text):
         return None
 
     return RowData(
