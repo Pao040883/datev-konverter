@@ -107,6 +107,44 @@ def _download(url: str, target_path: str) -> None:
             out_file.write(chunk)
 
 
+def _build_update_script(target_exe: str, new_exe: str, log_path: str) -> str:
+    """Erzeugt das Batch-Skript fuer den verzoegerten EXE-Austausch.
+
+    Kernidee: NICHT auf eine Prozess-ID warten (bei PyInstaller-onefile haelt ein
+    zweiter Bootloader-Prozess die EXE noch kurz gesperrt), sondern den ``move`` in
+    einer Schleife wiederholen, bis die alte EXE freigegeben ist und ersetzt werden
+    kann. Solange die neue Datei noch existiert, war der move nicht erfolgreich.
+    """
+    return (
+        "@echo off\r\n"
+        "setlocal enableextensions\r\n"
+        f'set "TARGET={target_exe}"\r\n'
+        f'set "NEWEXE={new_exe}"\r\n'
+        f'set "LOG={log_path}"\r\n'
+        'echo [%date% %time%] Update gestartet>>"%LOG%"\r\n'
+        "rem kurze Anfangsverzoegerung, damit sich die alte EXE beenden kann\r\n"
+        "ping -n 3 127.0.0.1 >nul\r\n"
+        "set /a tries=0\r\n"
+        ":retry\r\n"
+        'move /Y "%NEWEXE%" "%TARGET%" >>"%LOG%" 2>&1\r\n'
+        'if not exist "%NEWEXE%" goto done\r\n'
+        "set /a tries+=1\r\n"
+        "if %tries% geq 90 goto giveup\r\n"
+        "ping -n 2 127.0.0.1 >nul\r\n"
+        "goto retry\r\n"
+        ":giveup\r\n"
+        'echo [%date% %time%] Austausch fehlgeschlagen nach %tries% Versuchen>>"%LOG%"\r\n'
+        'start "" "%TARGET%"\r\n'
+        'del "%~f0"\r\n'
+        "exit\r\n"
+        ":done\r\n"
+        'echo [%date% %time%] Austausch erfolgreich>>"%LOG%"\r\n'
+        'start "" "%TARGET%"\r\n'
+        'del "%~f0"\r\n'
+        "exit\r\n"
+    )
+
+
 def apply_update(download_url: str) -> None:
     """Laedt die neue EXE und startet den verzoegerten Selbst-Tausch.
 
@@ -121,27 +159,19 @@ def apply_update(download_url: str) -> None:
         )
 
     current_exe = os.path.abspath(sys.executable)
-    exe_dir = os.path.dirname(current_exe)
-    new_exe = os.path.join(exe_dir, "DATEV-Konverter.new.exe")
+    tmp_dir = tempfile.gettempdir()
+    # Neue EXE bewusst im TEMP-Ordner ablegen, nicht neben der laufenden EXE,
+    # damit dort auch bei einem Fehler keine ".new.exe" liegen bleibt.
+    new_exe = os.path.join(tmp_dir, "DATEV-Konverter.new.exe")
+    log_path = os.path.join(tmp_dir, "datev_update_log.txt")
+    bat_path = os.path.join(tmp_dir, "datev_konverter_update.bat")
 
     _download(download_url, new_exe)
 
-    pid = os.getpid()
-    bat_path = os.path.join(tempfile.gettempdir(), "datev_konverter_update.bat")
-    bat_content = (
-        "@echo off\r\n"
-        ":waitloop\r\n"
-        f'tasklist /FI "PID eq {pid}" 2>NUL | find "{pid}" >NUL\r\n'
-        "if not errorlevel 1 (\r\n"
-        "    ping -n 2 127.0.0.1 >NUL\r\n"
-        "    goto waitloop\r\n"
-        ")\r\n"
-        f'move /Y "{new_exe}" "{current_exe}" >NUL\r\n'
-        f'start "" "{current_exe}"\r\n'
-        'del "%~f0"\r\n'
-    )
-    with open(bat_path, "w", encoding="ascii") as bat_file:
-        bat_file.write(bat_content)
+    # Als OEM/Konsolen-Codepage schreiben, damit Umlaute in Pfaden von cmd korrekt
+    # gelesen werden.
+    with open(bat_path, "w", encoding="oem", errors="replace") as bat_file:
+        bat_file.write(_build_update_script(current_exe, new_exe, log_path))
 
     # Losgeloest starten, damit das Skript den Elternprozess (uns) ueberlebt.
     detached = 0x00000008  # DETACHED_PROCESS

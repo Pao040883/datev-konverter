@@ -179,5 +179,24 @@ class UpdaterVersionTests(unittest.TestCase):
         self.assertFalse(updater.is_newer("v0.9.0", "1.0.0"))
 
 
+class UpdateScriptTests(unittest.TestCase):
+    def test_script_has_retry_loop_and_paths(self):
+        script = updater._build_update_script(
+            r"C:\Tools\DATEV-Konverter.exe",
+            r"C:\Temp\DATEV-Konverter.new.exe",
+            r"C:\Temp\log.txt",
+        )
+        # Wiederhol-Schleife statt PID-Warten
+        self.assertIn(":retry", script)
+        self.assertIn("goto retry", script)
+        self.assertIn('if not exist "%NEWEXE%" goto done', script)
+        # Austausch + Neustart
+        self.assertIn('move /Y "%NEWEXE%" "%TARGET%"', script)
+        self.assertIn('start "" "%TARGET%"', script)
+        # Zielpfade korrekt eingesetzt
+        self.assertIn('set "TARGET=C:\\Tools\\DATEV-Konverter.exe"', script)
+        self.assertIn("C:\\Temp\\DATEV-Konverter.new.exe", script)
+
+
 if __name__ == "__main__":
     unittest.main()

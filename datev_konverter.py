@@ -10,7 +10,7 @@ Die eigentliche Konvertierungslogik liegt in core.py, der Update-Mechanismus in
 updater.py -- diese Datei ist reine Oberflaeche plus Programmstart.
 """
 
-import sys
+import os
 from pathlib import Path
 
 try:
@@ -333,9 +333,11 @@ class App(tk.Tk):
             messagebox.showerror(APP_TITLE, f"Update fehlgeschlagen:\n{exc}")
             return
 
-        messagebox.showinfo(APP_TITLE, "Update wird installiert. Das Programm startet neu.")
+        # Ohne weitere Rueckfrage schliessen; das Update-Skript startet die neue
+        # Version automatisch. Hart beenden, damit die EXE-Sperre sofort frei wird
+        # und das Skript die Datei ersetzen kann.
         self.destroy()
-        sys.exit(0)
+        os._exit(0)
 
     def _show_about(self) -> None:
         messagebox.showinfo(
