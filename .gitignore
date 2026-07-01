@@ -1,0 +1,19 @@
+# --- Build-/Laufzeit-Artefakte ---
+.venv/
+build/
+dist/
+__pycache__/
+*.pyc
+*.spec.bak
+
+# --- ECHTE BANKDATEN: duerfen NICHT ins oeffentliche Repo ---
+# Enthalten echte IBANs, Namen und Betraege.
+DATEV.TXT
+Datev_*.txt
+Mac_app_Fehler.txt
+
+# --- Alte Verteil-/Packaging-Artefakte (durch Cloud-Build ersetzt) ---
+*.zip
+
+# --- Betriebssystem ---
+.DS_Store
