@@ -40,7 +40,7 @@ jobs:
           Write-Host "Gebaute Version: $ver"
 
       - name: EXE bauen
-        run: pyinstaller --noconfirm --clean --onefile --windowed --name DATEV-Konverter datev_konverter.py
+        run: pyinstaller --noconfirm --clean --onefile --windowed --splash splash.png --name DATEV-Konverter datev_konverter.py
 
       - name: Artefakt hochladen (immer)
         uses: actions/upload-artifact@v4

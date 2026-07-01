@@ -14,7 +14,7 @@ Write-Host "[3/4] Abhaengigkeiten installieren..."
 & .\.venv\Scripts\python.exe -m pip install --upgrade pip pyinstaller
 
 Write-Host "[4/4] EXE bauen..."
-& .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onefile --windowed --name DATEV-Konverter datev_konverter.py
+& .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onefile --windowed --splash splash.png --name DATEV-Konverter datev_konverter.py
 
 Write-Host ""
 Write-Host "Fertig. Die EXE liegt in: dist/DATEV-Konverter.exe"

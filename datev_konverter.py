@@ -69,11 +69,22 @@ class App(tk.Tk):
         self.after(800, lambda: self.check_updates(manual=False))
 
     def _bring_to_front(self) -> None:
+        # Den PyInstaller-Startbildschirm schliessen, sobald das Fenster da ist.
+        self._close_splash()
         try:
             self.lift()
             self.attributes("-topmost", True)
             self.after(400, lambda: self.attributes("-topmost", False))
             self.focus_force()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _close_splash(self) -> None:
+        # ``pyi_splash`` gibt es nur in der gebauten EXE mit Startbildschirm.
+        try:
+            import pyi_splash
+
+            pyi_splash.close()
         except Exception:  # noqa: BLE001
             pass
 
@@ -383,7 +394,7 @@ class App(tk.Tk):
             return
 
         bar["value"] = 100
-        status.set("Fertig. Das Programm startet gleich neu …")
+        status.set("Fertig. Neue Version wird gestartet …")
         win.update_idletasks()
         # Kurz stehen lassen, dann hart beenden -> das Update-Skript ersetzt die
         # EXE und startet die neue Version automatisch.

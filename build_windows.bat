@@ -47,7 +47,7 @@ if %errorlevel% neq 0 (
 echo.
 
 echo [4/4] EXE bauen...
-".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean --onefile --windowed --name DATEV-Konverter datev_konverter.py
+".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean --onefile --windowed --splash splash.png --name DATEV-Konverter datev_konverter.py
 if %errorlevel% neq 0 (
   echo Fehler beim Build.
   echo.
